@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -118,6 +119,44 @@ func NewAiClient(cfg *config.Config) *AiClient {
 		config: cfg,
 		client: &http.Client{},
 	}
+}
+
+// readResponseBody handles both plain JSON and SSE‑style streaming responses.
+// It returns a clean JSON payload ready for unmarshalling.
+func (c *AiClient) readResponseBody(resp *http.Response) ([]byte, error) {
+	contentType := resp.Header.Get("Content-Type")
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// If not an SSE stream and no "data:" markers, assume plain JSON.
+	if !strings.Contains(contentType, "text/event-stream") && !bytes.Contains(rawBody, []byte("data:")) {
+		return rawBody, nil
+	}
+
+	// Parse SSE lines.
+	var buf bytes.Buffer
+	scanner := bufio.NewScanner(bytes.NewReader(rawBody))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "data:") {
+			payload := strings.TrimPrefix(line, "data:")
+			payload = strings.TrimSpace(payload)
+			if payload == "[DONE]" || payload == "" {
+				continue
+			}
+			buf.WriteString(payload)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading SSE payload: %w", err)
+	}
+	if buf.Len() == 0 {
+		// No SSE payload found – fall back to raw body.
+		return rawBody, nil
+	}
+	return buf.Bytes(), nil
 }
 
 // SetConfigManager sets the configuration manager for accessing model configurations
@@ -319,25 +358,16 @@ func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read the response
-	body, err := io.ReadAll(resp.Body)
+	// Read and clean the response (handle plain JSON or SSE streams)
+	cleanBody, err := c.readResponseBody(resp)
 	if err != nil {
 		logger.Error("Failed to read response: %v", err)
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Log the raw response for debugging
-	logger.Debug("API response status: %d, response size: %d bytes", resp.StatusCode, len(body))
-
-	// Some providers (e.g., OpenRouter) may append a trailing "data: [DONE]" line after the JSON.
-	// Trim any such trailing content that would break JSON unmarshalling.
-	trimmedBody := body
-	if i := bytes.LastIndexByte(body, '}'); i != -1 && i+1 < len(body) {
-		if suffix := bytes.TrimSpace(body[i+1:]); len(suffix) > 0 {
-			trimmedBody = body[:i+1]
-		}
-	}
-
+	// Log the cleaned response for debugging
+	logger.Debug("API response status: %d, cleaned response size: %d bytes", resp.StatusCode, len(cleanBody))
+	trimmedBody := cleanBody
 	// Check for errors
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("API returned error: %s", trimmedBody)
@@ -359,7 +389,7 @@ func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model
 	}
 
 	// Enhanced error for no completion choices
-	logger.Error("No completion choices returned. Raw response: %s", string(body))
+	logger.Error("No completion choices returned. Raw response: %s", string(trimmedBody))
 	return "", fmt.Errorf("no completion choices returned (model: %s, status: %d)", model, resp.StatusCode)
 }
 
@@ -463,16 +493,25 @@ func (c *AiClient) Response(ctx context.Context, messages []Message, model strin
 	// Log the raw response for debugging
 	logger.Debug("Responses API response status: %d, response size: %d bytes", resp.StatusCode, len(body))
 
+	// Some providers (e.g., OpenRouter) may stream additional SSE-like lines after JSON.
+	// Trim any trailing data after the final JSON object.
+	trimmedBody := body
+	if i := bytes.LastIndexByte(body, '}'); i != -1 && i+1 < len(body) {
+		if suffix := bytes.TrimSpace(body[i+1:]); len(suffix) > 0 {
+			trimmedBody = body[:i+1]
+		}
+	}
+
 	// Check for errors
 	if resp.StatusCode != http.StatusOK {
-		logger.Error("Responses API returned error: %s", body)
-		return "", fmt.Errorf("API returned error: %s", body)
+		logger.Error("Responses API returned error: %s", trimmedBody)
+		return "", fmt.Errorf("API returned error: %s", trimmedBody)
 	}
 
 	// Parse the response
 	var response Response
-	if err := json.Unmarshal(body, &response); err != nil {
-		logger.Error("Failed to unmarshal Responses API response: %v, body: %s", err, body)
+	if err := json.Unmarshal(trimmedBody, &response); err != nil {
+		logger.Error("Failed to unmarshal Responses API response: %v, body: %s", err, trimmedBody)
 		return "", fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 

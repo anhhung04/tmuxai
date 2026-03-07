@@ -16,6 +16,7 @@ require (
 	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.40.0
 	google.golang.org/genai v1.46.0
+	github.com/litellm/litellm-go v0.2.2
 )
 
 require (
