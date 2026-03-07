@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/anhhung04/tmuxai/config"
 )
-
 
 // TestLoadKBNonExistent tests loading a non-existent KB
 func TestLoadKBNonExistent(t *testing.T) {
@@ -73,7 +72,6 @@ func TestUnloadKBNonLoaded(t *testing.T) {
 		t.Fatal("Expected error when unloading non-loaded KB, got nil")
 	}
 }
-
 
 // TestGetTotalLoadedKBTokens tests token counting for loaded KBs
 func TestGetTotalLoadedKBTokens(t *testing.T) {

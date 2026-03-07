@@ -3,18 +3,18 @@ package internal
 import (
 	"testing"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/anhhung04/tmuxai/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestModelConfiguration(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *config.Config
-		expectedModel  string
-		expectedValid  bool
-		expectedCount  int
+		name          string
+		config        *config.Config
+		expectedModel string
+		expectedValid bool
+		expectedCount int
 	}{
 		{
 			name: "multiple models with default",
@@ -179,8 +179,8 @@ func TestModelConfigurationWithSessionOverrides(t *testing.T) {
 
 func TestGetModel(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *config.Config
+		name          string
+		config        *config.Config
 		expectedModel string
 	}{
 		{
@@ -258,10 +258,10 @@ func TestGetModel(t *testing.T) {
 
 func TestLegacyModelConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *config.Config
+		name             string
+		config           *config.Config
 		expectedProvider string
-		expectedModel   string
+		expectedModel    string
 	}{
 		{
 			name: "openai priority",
@@ -276,7 +276,7 @@ func TestLegacyModelConfig(t *testing.T) {
 				},
 			},
 			expectedProvider: "openai",
-			expectedModel:   "gpt-4",
+			expectedModel:    "gpt-4",
 		},
 		{
 			name: "azure priority over openrouter",
@@ -291,7 +291,7 @@ func TestLegacyModelConfig(t *testing.T) {
 				},
 			},
 			expectedProvider: "azure",
-			expectedModel:   "gpt-4o",
+			expectedModel:    "gpt-4o",
 		},
 		{
 			name: "openrouter fallback",
@@ -302,7 +302,7 @@ func TestLegacyModelConfig(t *testing.T) {
 				},
 			},
 			expectedProvider: "openrouter",
-			expectedModel:   "gemini-flash",
+			expectedModel:    "gemini-flash",
 		},
 	}
 

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
-	"github.com/alvinunreal/tmuxai/logger"
-	"github.com/alvinunreal/tmuxai/system"
+	"github.com/anhhung04/tmuxai/config"
+	"github.com/anhhung04/tmuxai/logger"
+	"github.com/anhhung04/tmuxai/system"
 	"github.com/fatih/color"
 )
 
@@ -45,7 +45,7 @@ type Manager struct {
 	LoadedKBs        map[string]string      // Loaded knowledge bases (name -> content)
 
 	// Functions for mocking
-	confirmedToExec  func(command string, prompt string, edit bool) (bool, string)
+	confirmedToExec   func(command string, prompt string, edit bool) (bool, string)
 	getTmuxPanesInXml func(config *config.Config) string
 }
 

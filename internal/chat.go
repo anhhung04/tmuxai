@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alvinunreal/tmuxai/config"
+	"github.com/anhhung04/tmuxai/config"
 	"github.com/nyaosorg/go-readline-ny"
 	"github.com/nyaosorg/go-readline-ny/completion"
 	"github.com/nyaosorg/go-readline-ny/keys"

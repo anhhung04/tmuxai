@@ -8,9 +8,9 @@
     Your intelligent pair programmer directly within your tmux sessions.
     <br/>
     <br/>
-    <a href="https://github.com/anhhung04/tmuxai/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/alvinunreal/tmuxai?style=flat-square"></a>
-    <a href="https://github.com/anhhung04/tmuxai/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/alvinunreal/tmuxai?style=flat-square"></a>
-    <a href="https://github.com/anhhung04/tmuxai/issues"><img alt="Issues" src="https://img.shields.io/github/issues/alvinunreal/tmuxai?style=flat-square"></a>
+    <a href="https://github.com/anhhung04/tmuxai/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/anhhung04/tmuxai?style=flat-square"></a>
+    <a href="https://github.com/anhhung04/tmuxai/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/anhhung04/tmuxai?style=flat-square"></a>
+    <a href="https://github.com/anhhung04/tmuxai/issues"><img alt="Issues" src="https://img.shields.io/github/issues/anhhung04/tmuxai?style=flat-square"></a>
     <br/>
     <a href="https://moltfounders.com/jobs/249106d7-782a-4b35-8420-c86c1646e569"><img src="https://moltfounders.com/badges/4.png" alt="MoltFounders" height="25"></a>
     <br/>
