@@ -329,16 +329,25 @@ func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model
 	// Log the raw response for debugging
 	logger.Debug("API response status: %d, response size: %d bytes", resp.StatusCode, len(body))
 
+	// Some providers (e.g., OpenRouter) may append a trailing "data: [DONE]" line after the JSON.
+	// Trim any such trailing content that would break JSON unmarshalling.
+	trimmedBody := body
+	if i := bytes.LastIndexByte(body, '}'); i != -1 && i+1 < len(body) {
+		if suffix := bytes.TrimSpace(body[i+1:]); len(suffix) > 0 {
+			trimmedBody = body[:i+1]
+		}
+	}
+
 	// Check for errors
 	if resp.StatusCode != http.StatusOK {
-		logger.Error("API returned error: %s", body)
-		return "", fmt.Errorf("API returned error: %s", body)
+		logger.Error("API returned error: %s", trimmedBody)
+		return "", fmt.Errorf("API returned error: %s", trimmedBody)
 	}
 
 	// Parse the response
 	var completionResp ChatCompletionResponse
-	if err := json.Unmarshal(body, &completionResp); err != nil {
-		logger.Error("Failed to unmarshal response: %v, body: %s", err, body)
+	if err := json.Unmarshal(trimmedBody, &completionResp); err != nil {
+		logger.Error("Failed to unmarshal response: %v, body: %s", err, trimmedBody)
 		return "", fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
