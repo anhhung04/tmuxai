@@ -2,8 +2,10 @@ package internal
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -109,13 +111,16 @@ type ResponseUsage struct {
 	TotalTokens     int `json:"total_tokens"`
 }
 
+// readResponseBody reads the entire response body and returns it.
+func (c *AiClient) readResponseBody(resp *http.Response) ([]byte, error) {
+	return io.ReadAll(resp.Body)
+}
+
 func NewAiClient(cfg *config.Config) *AiClient {
 	return &AiClient{
 		config: cfg,
-		client: &http.Client{},
 	}
 }
-
 
 // SetConfigManager sets the configuration manager for accessing model configurations
 func (c *AiClient) SetConfigManager(mgr *Manager) {
@@ -239,154 +244,71 @@ func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model str
 	return content, nil
 }
 
-// Response sends a request to the OpenAI Responses API
-func (c *AiClient) Response(ctx context.Context, messages []Message, model string) (string, error) {
-	// Convert messages to Responses API format
-	var input ResponseInput
-	var instructions string
-
-	if len(messages) == 0 {
-		return "", fmt.Errorf("no messages provided")
-	}
-
-	// Check if first message is a system message
-	if messages[0].Role == "system" {
-		instructions = messages[0].Content
-		if len(messages) > 1 {
-			input = messages[1:]
-		} else {
-			// Only system message provided, no user input
-			return "", fmt.Errorf("only system message provided, no user message to process")
-		}
-	} else {
-		input = messages
-	}
-
-	reqBody := ResponseRequest{
-		Model:        model,
-		Input:        input,
-		Instructions: instructions,
-		Store:        false, // Default to stateless for better control over API usage and costs
-	}
-
-	// Get model configuration for OpenAI
-	var apiKey string
-	var baseURL string
-
-	// Try to get model configuration
+// ChatCompletion sends a chat completion request using the official OpenAI SDK.
+// It mirrors the previous custom implementation but now relies on the SDK for reliability.
+func (c *AiClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (ChatCompletionResponse, error) {
+	// Resolve API key and base URL the same way OpenAIChat does.
+	var apiKey, baseURL string
 	if c.configMgr != nil {
-		if modelConfig, exists := c.configMgr.GetCurrentModelConfig(); exists && modelConfig.Provider == "openai" {
-			apiKey = modelConfig.APIKey
-			baseURL = modelConfig.BaseURL
-		}
-	}
-
-	// Fallback to legacy configuration
-	if apiKey == "" {
-		apiKey = c.config.OpenAI.APIKey
-	}
-
-	if baseURL == "" {
-		baseURL = c.config.OpenAI.BaseURL
-	}
-
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	url := baseURL + "/responses"
-
-	reqJSON, err := json.Marshal(reqBody)
-	if err != nil {
-		logger.Error("Failed to marshal Responses API request: %v", err)
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqJSON))
-	if err != nil {
-		logger.Error("Failed to create Responses API request: %v", err)
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	req.Header.Set("HTTP-Referer", "https://github.com/anhhung04/tmuxai")
-	req.Header.Set("X-Title", "TmuxAI")
-
-	// Log the request details for debugging before sending
-	logger.Debug("Sending Responses API request to: %s with model: %s", url, model)
-
-	// Send the request
-	resp, err := c.client.Do(req)
-	if err != nil {
-		if ctx.Err() == context.Canceled {
-			return "", fmt.Errorf("request canceled: %w", ctx.Err())
-		}
-		logger.Error("Failed to send Responses API request: %v", err)
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Read and clean the response (handle plain JSON or SSE streams)
-	cleanBody, err := c.readResponseBody(resp)
-	if err != nil {
-		logger.Error("Failed to read Responses API response: %v", err)
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Log the cleaned response for debugging
-	logger.Debug("Responses API response status: %d, cleaned response size: %d bytes", resp.StatusCode, len(cleanBody))
-
-	// Trim any trailing data after the final JSON object (if needed).
-	trimmedBody := cleanBody
-	if i := bytes.LastIndexByte(cleanBody, '}'); i != -1 && i+1 < len(cleanBody) {
-		if suffix := bytes.TrimSpace(cleanBody[i+1:]); len(suffix) > 0 {
-			trimmedBody = cleanBody[:i+1]
-		}
-	}
-
-	// Check for errors
-	if resp.StatusCode != http.StatusOK {
-		logger.Error("Responses API returned error: %s", trimmedBody)
-		return "", fmt.Errorf("API returned error: %s", trimmedBody)
-	}
-
-	// Parse the response
-	var response Response
-	if err := json.Unmarshal(trimmedBody, &response); err != nil {
-		logger.Error("Failed to unmarshal Responses API response: %v, body: %s", err, trimmedBody)
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	// Check for API errors in response body
-	if response.Error != nil {
-		logger.Error("Responses API returned error: %s", response.Error.Message)
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
-	}
-
-	// Return the response content
-	if response.OutputText != "" {
-		logger.Debug("Received Responses API response (%d characters): %s", len(response.OutputText), response.OutputText)
-		return response.OutputText, nil
-	}
-
-	// If no output_text, extract from message items
-	for _, item := range response.Output {
-		if item.Type == "message" && item.Status == "completed" {
-			for _, content := range item.Content {
-				if (content.Type == "output_text" || content.Type == "text") && content.Text != "" {
-					logger.Debug("Received Responses API response from output items (%d characters): %s", len(content.Text), content.Text)
-					return content.Text, nil
-				}
+		if mc, ok := c.configMgr.GetCurrentModelConfig(); ok {
+			if mc.Provider == "openai" || mc.Provider == "azure" || mc.Provider == "openrouter" {
+				apiKey = mc.APIKey
+				baseURL = mc.BaseURL
 			}
 		}
 	}
+	if apiKey == "" {
+		apiKey = c.config.OpenAI.APIKey
+	}
+	if baseURL == "" {
+		baseURL = c.config.OpenAI.BaseURL
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	cfg := openai.DefaultConfig(apiKey)
+	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
+	client := openai.NewClientWithConfig(cfg)
 
-	// Enhanced error for no response content
-	logger.Error("No response content returned. Raw response: %s", string(trimmedBody))
-	return "", fmt.Errorf("no response content returned (model: %s, status: %d)", model, resp.StatusCode)
+	// Convert request messages to SDK format.
+	oaMsgs := make([]openai.ChatCompletionMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		role := openai.ChatMessageRoleAssistant
+		if m.Role == "user" {
+			role = openai.ChatMessageRoleUser
+		} else if m.Role == "system" {
+			role = openai.ChatMessageRoleSystem
+		}
+		oaMsgs[i] = openai.ChatCompletionMessage{Role: role, Content: m.Content}
+	}
+
+	oaReq := openai.ChatCompletionRequest{Model: req.Model, Messages: oaMsgs}
+	resp, err := client.CreateChatCompletion(ctx, oaReq)
+	if err != nil {
+		logger.Error("OpenAI request failed: %v", err)
+		return ChatCompletionResponse{}, fmt.Errorf("openai request error: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return ChatCompletionResponse{}, fmt.Errorf("no completion choices returned (model: %s)", req.Model)
+	}
+
+	choice := resp.Choices[0]
+	cResp := ChatCompletionResponse{
+		ID:      resp.ID,
+		Object:  resp.Object,
+		Created: resp.Created,
+		Choices: []ChatCompletionChoice{{
+			Index:   choice.Index,
+			Message: Message{Role: string(choice.Message.Role), Content: choice.Message.Content},
+		}},
+	}
+	return cResp, nil
+}
+
+// Response sends a request to the OpenAI Responses API (legacy wrapper).
+func (c *AiClient) Response(ctx context.Context, messages []Message, model string) (string, error) {
+	// For backward compatibility, delegate to OpenAIChat which now uses the official SDK.
+	return c.OpenAIChat(ctx, messages, model)
 }
 
 // getOrCreateGeminiClient creates or returns the cached Gemini client
