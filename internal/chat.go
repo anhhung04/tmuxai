@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anhhung04/tmuxai/config"
+	"github.com/fatih/color"
 	"github.com/nyaosorg/go-readline-ny"
 	"github.com/nyaosorg/go-readline-ny/completion"
 	"github.com/nyaosorg/go-readline-ny/keys"
@@ -125,8 +126,21 @@ func (c *CLIInterface) Start(initMessage string) error {
 
 // printWelcomeMessage prints a welcome message
 func (c *CLIInterface) printWelcomeMessage() {
+	appColor := color.New(color.FgGreen, color.Bold)
+	dimColor := color.New(color.FgBlue)
+	labelColor := color.New(color.FgBlue, color.Bold)
+
 	fmt.Println()
-	fmt.Println("Type '/help' for a list of commands, '/exit' to quit")
+	fmt.Printf("  %s  %s\n", appColor.Sprint("TmuxAI"), dimColor.Sprint("v"+Version))
+
+	model := c.manager.GetModelsDefault()
+	if model != "" {
+		fmt.Printf("  %s %s\n", labelColor.Sprint("Model:"), model)
+	}
+	if c.manager.ExecPane != nil && c.manager.ExecPane.Id != "" {
+		fmt.Printf("  %s %s\n", labelColor.Sprint("Pane: "), c.manager.ExecPane.Id)
+	}
+	fmt.Printf("  %s\n", dimColor.Sprint("Type '/help' for commands  ·  '/info' for details  ·  '/exit' to quit"))
 	fmt.Println()
 }
 

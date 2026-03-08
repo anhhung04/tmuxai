@@ -34,7 +34,7 @@ func NewInfoFormatter() *InfoFormatter {
 func (f *InfoFormatter) FormatSection(title string) string {
 	return fmt.Sprintf("%s\n%s\n",
 		f.HeaderColor.Sprint(title),
-		f.NeutralColor.Sprint(strings.Repeat("─", len(title))))
+		f.NeutralColor.Sprint(strings.Repeat("─", len(strings.TrimSpace(title)))))
 }
 
 // FormatProgressBar generates a visual indicator for percentage values

@@ -71,7 +71,7 @@ func (m *Manager) autoLoadKBs() {
 	for _, name := range m.Config.KnowledgeBase.AutoLoad {
 		if err := m.loadKB(name); err != nil {
 			logger.Error("Failed to auto-load KB '%s': %v", name, err)
-			m.Println(fmt.Sprintf("Warning: Failed to auto-load KB '%s': %v", name, err))
+			m.PrintWarning(fmt.Sprintf("Failed to auto-load KB '%s': %v", name, err))
 		}
 	}
 }
@@ -92,7 +92,7 @@ func (m *Manager) LoadKBsFromCLI(kbNames []string) {
 
 		if err := m.loadKB(name); err != nil {
 			logger.Error("Failed to load KB '%s' from CLI: %v", name, err)
-			m.Println(fmt.Sprintf("Warning: Failed to load KB '%s': %v", name, err))
+			m.PrintWarning(fmt.Sprintf("Failed to load KB '%s': %v", name, err))
 		}
 	}
 }

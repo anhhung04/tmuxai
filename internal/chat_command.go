@@ -12,19 +12,30 @@ import (
 )
 
 const helpMessage = `Available commands:
-- /info: Display system information
-- /clear: Clear the chat history
-- /reset: Reset the chat history
-- /prepare: Prepare the pane for TmuxAI automation
-- /watch <prompt>: Start watch mode
-- /squash: Summarize the chat history
-- /model: List available models and show current model
-- /model <name>: Switch to a different model
-- /kb: List available knowledge bases
-- /kb load <name>: Load a knowledge base
-- /kb unload <name>: Unload a knowledge base
-- /kb unload --all: Unload all knowledge bases
-- /exit: Exit the application`
+
+  Navigation & Control
+    /help              Show this help
+    /info              System info, model, pane state, context usage
+    /exit              Exit TmuxAI
+
+  Pane & Session
+    /prepare [shell]   Prepare exec pane (bash/zsh/fish)
+    /watch <desc>      Start watch mode — monitor pane continuously
+    /clear             Clear chat history
+    /reset             Reset history and clear panes
+    /squash            Summarize history to free up context
+
+  Configuration
+    /config            Show current configuration
+    /config set <key> <value>  Override a config value for this session
+    /model             List available models
+    /model <name>      Switch model
+
+  Knowledge Bases
+    /kb                List available knowledge bases
+    /kb load <name>    Load a knowledge base into context
+    /kb unload <name>  Unload a knowledge base
+    /kb unload --all   Unload all knowledge bases`
 
 var commands = []string{
 	"/help",
@@ -103,7 +114,9 @@ func (m *Manager) ProcessSubCommand(command string) {
 		m.ExecPane.Refresh(m.GetMaxCaptureLines())
 		m.Messages = []ChatMessage{}
 
-		fmt.Println(m.ExecPane.String())
+		m.Println("Pane prepared:")
+		formatter := system.NewInfoFormatter()
+		fmt.Println(m.ExecPane.FormatInfo(formatter))
 		m.parseExecPaneCommandHistory()
 
 		logger.Debug("Parsed exec history:")
@@ -315,7 +328,8 @@ func (m *Manager) formatInfo() {
 		fmt.Println(value)
 	}
 	// Display general information
-	fmt.Println(formatter.FormatSection("\nGeneral"))
+	fmt.Println()
+	fmt.Println(formatter.FormatSection("General"))
 	formatLine("Version", Version)
 	formatLine("Max Capture Lines", m.Config.MaxCaptureLines)
 	formatLine("Wait Interval", m.Config.WaitInterval)
@@ -344,7 +358,8 @@ func (m *Manager) formatInfo() {
 	}
 
 	// Display context information section
-	fmt.Println(formatter.FormatSection("\nContext"))
+	fmt.Println()
+	fmt.Println(formatter.FormatSection("Context"))
 	formatLine("Messages", len(m.Messages))
 	var totalTokens int
 	for _, msg := range m.Messages {
@@ -386,7 +401,8 @@ func (m *Manager) listModels() {
 	currentModelConfig, _ := m.GetCurrentModelConfig()
 	currentDefault := m.GetModelsDefault()
 
-	fmt.Println(formatter.FormatSection("\nAvailable Models"))
+	fmt.Println()
+	fmt.Println(formatter.FormatSection("Available Models"))
 
 	// List configured models
 	availableModels := m.GetAvailableModels()
@@ -402,19 +418,20 @@ func (m *Manager) listModels() {
 			}
 		}
 	} else {
-		fmt.Println("No model configurations found. Using legacy configuration.")
+		fmt.Println("No named models configured. Using provider settings from config.yaml.")
+		fmt.Println("Run '/info' to see the current model, or add a 'models:' block to your config.")
 	}
 
-	// Show current model from legacy config if no models configured
+	// Show current model
 	if len(availableModels) == 0 || currentDefault == "" {
-		fmt.Println("\nCurrent Model (Legacy):")
+		fmt.Println("\nActive Model:")
 		fmt.Printf("  Provider: %s\n", currentModelConfig.Provider)
 		fmt.Printf("  Model: %s\n", currentModelConfig.Model)
 		if currentModelConfig.BaseURL != "" {
 			fmt.Printf("  Base URL: %s\n", currentModelConfig.BaseURL)
 		}
 	} else {
-		fmt.Println("\nCurrent Model:")
+		fmt.Println("\nActive Model:")
 		fmt.Printf("  Configuration: %s\n", currentDefault)
 		fmt.Printf("  Provider: %s\n", currentModelConfig.Provider)
 		fmt.Printf("  Model: %s\n", currentModelConfig.Model)
@@ -424,7 +441,7 @@ func (m *Manager) listModels() {
 	}
 
 	if len(availableModels) > 0 {
-		fmt.Println("\nUsage: /model <name> to switch models")
+		fmt.Println("\nUse '/model <name>' to switch.")
 	}
 }
 

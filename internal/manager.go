@@ -118,6 +118,16 @@ func (m *Manager) Println(msg string) {
 	fmt.Println(m.GetPrompt() + msg)
 }
 
+func (m *Manager) PrintError(msg string) {
+	c := color.New(color.FgRed, color.Bold)
+	fmt.Println(m.GetPrompt() + c.Sprint("✗ ") + msg)
+}
+
+func (m *Manager) PrintWarning(msg string) {
+	c := color.New(color.FgYellow, color.Bold)
+	fmt.Println(m.GetPrompt() + c.Sprint("⚠ ") + msg)
+}
+
 func (m *Manager) GetConfig() *config.Config {
 	return m.Config
 }

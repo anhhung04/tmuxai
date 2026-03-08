@@ -16,7 +16,7 @@ func (m *Manager) Countdown(seconds int) {
 
 	// Set up keyboard
 	if err := keyboard.Open(); err != nil {
-		fmt.Println("Error opening keyboard:", err)
+		m.PrintError("Failed to open keyboard: " + err.Error())
 		return
 	}
 	defer func() { _ = keyboard.Close() }()
@@ -91,8 +91,6 @@ func renderCountdown(remaining, total int, paused bool, highlightColor, dimColor
 		statusIndicator = highlightColor("▶")
 	}
 
-	// Ensure exact character count and consistent spacing with printf
-	// %2s gives a fixed width for the status indicator
-	fmt.Printf("%s %s [Space: Pause/Resume | Enter: To continue]",
+	fmt.Printf("%s %s  [Space] pause  [Enter] skip",
 		statusIndicator, strings.Join(dots, " "))
 }

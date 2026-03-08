@@ -20,6 +20,7 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 	}
 
 	s := spinner.New(spinner.CharSets[26], 100*time.Millisecond)
+	s.Suffix = " Thinking..."
 	s.Start()
 
 	// check for status change before processing
@@ -67,19 +68,17 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 	if !m.hasValidAIConfiguration() {
 		s.Stop()
 		m.Status = ""
-		fmt.Println("⚠️  No AI configuration found.")
-		fmt.Println("Please configure your AI settings:")
-		fmt.Println("  • Add model configurations to ~/.config/tmuxai/config.yaml")
-		fmt.Println("  • Or set environment variables for your AI provider")
-		fmt.Println("  • Use '/model' to check available configurations")
-		fmt.Println("")
-		fmt.Println("Example configuration:")
-		fmt.Println("  default_model: 'gemini-flash'")
-		fmt.Println("  models:")
-		fmt.Println("    gemini-flash:")
-		fmt.Println("      provider: 'openrouter'")
-		fmt.Println("      model: 'google/gemini-2.5-flash-preview'")
-		fmt.Println("      api_key: 'sk-or-your-api-key'")
+		m.PrintError("No AI configuration found.")
+		m.Println("Configure your AI settings in ~/.config/tmuxai/config.yaml:")
+		m.Println("")
+		m.Println("  default_model: 'my-model'")
+		m.Println("  models:")
+		m.Println("    my-model:")
+		m.Println("      provider: 'openrouter'")
+		m.Println("      model: 'google/gemini-2.5-flash-preview'")
+		m.Println("      api_key: 'sk-or-your-api-key'")
+		m.Println("")
+		m.Println("Run '/model' to check available configurations.")
 		return false
 	}
 
@@ -92,11 +91,8 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 			return false
 		}
 
-		// Log both to console and debug file to capture error context
-		errMsg := "Failed to get response from AI: " + err.Error()
-		fmt.Println(errMsg)
+		m.PrintError("Failed to get response from AI: " + err.Error())
 
-		// Debug the failed request even when there's an error
 		if m.Config.Debug {
 			debugChatMessages(append(history, currentMessage), "ERROR: "+err.Error())
 		}
@@ -115,11 +111,8 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 		s.Stop()
 		m.Status = ""
 
-		// Log both to console and debug file
-		errMsg := "Failed to parse AI response: " + err.Error()
-		fmt.Println(errMsg)
+		m.PrintError("Failed to parse AI response: " + err.Error())
 
-		// Debug the failed parsing even when there's an error
 		if m.Config.Debug {
 			debugChatMessages(append(history, currentMessage), "PARSE ERROR: "+response)
 		}
@@ -174,7 +167,6 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 			isSafe = true
 		}
 		if isSafe {
-			m.Println("Executing command: " + command)
 			if m.ExecPane.IsPrepared {
 				_, _ = m.ExecWaitCapture(command)
 			} else {
@@ -223,7 +215,6 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 
 		// Send each key with delay
 		for _, sendKey := range r.SendKeys {
-			m.Println("Sending keys: " + sendKey)
 			_ = system.TmuxSendCommandToPane(m.ExecPane.Id, sendKey, false)
 			time.Sleep(1 * time.Second)
 		}
