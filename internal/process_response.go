@@ -5,6 +5,7 @@ import (
 	"html"
 	"regexp"
 	"strings"
+	"strconv"
 )
 
 // tagInfo holds a parsed tag's metadata and precompiled regexes.
@@ -67,6 +68,7 @@ var (
 	writeFileCodeBlock = regexp.MustCompile("(?s)```(?:xml)?\\s*<WriteFile[^>]*>.*?</WriteFile>\\s*```")
 	writeFilePlain     = regexp.MustCompile(`(?s)<WriteFile[^>]*>.*?</WriteFile>`)
 	collapseBlankRe    = regexp.MustCompile(`\n{3,}`)
+	execCmdRe          = regexp.MustCompile(`(?s)<ExecCommand(?:\s+timeout="(\d+)")?>(.*?)</ExecCommand>`)
 )
 
 func (m *Manager) parseAIResponse(response string) (AIResponse, error) {
@@ -103,6 +105,25 @@ func (m *Manager) parseAIResponse(response string) (AIResponse, error) {
 	}
 	cleanForMsg = writeFileCodeBlock.ReplaceAllString(cleanForMsg, "")
 	cleanForMsg = writeFilePlain.ReplaceAllString(cleanForMsg, "")
+
+	// ExecCommand with optional timeout attribute
+	for _, match := range execCmdRe.FindAllStringSubmatch(clean, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		cmd := strings.TrimSpace(match[2])
+		r.ExecCommand = append(r.ExecCommand, cmd)
+		if match[1] != "" {
+			if secs, err := strconv.Atoi(match[1]); err == nil {
+				r.ExecCommandTimeout = append(r.ExecCommandTimeout, secs)
+			} else {
+				r.ExecCommandTimeout = append(r.ExecCommandTimeout, 0)
+			}
+		} else {
+			r.ExecCommandTimeout = append(r.ExecCommandTimeout, 0)
+		}
+	}
+	cleanForMsg = execCmdRe.ReplaceAllString(cleanForMsg, "")
 
 	// Special handling: bool tags may appear as <TagName> or ```<TagName>``` (no value).
 	for _, t := range parsedTags {

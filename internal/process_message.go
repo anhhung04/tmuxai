@@ -181,7 +181,7 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 	}
 
 	// observe/prepared mode
-	for _, execCommand := range r.ExecCommand {
+	for i, execCommand := range r.ExecCommand {
 		code, _ := system.HighlightCode("sh", execCommand)
 		m.Println(code)
 
@@ -193,8 +193,48 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 			isSafe = true
 		}
 		if isSafe {
+			// Determine per-command timeout (seconds). 0 means no timeout.
+			cmdTimeout := 0
+			if i < len(r.ExecCommandTimeout) {
+				cmdTimeout = r.ExecCommandTimeout[i]
+			}
 			if m.ExecPane.IsPrepared {
-				_, _ = m.ExecWaitCapture(command)
+				if cmdTimeout > 0 {
+					// Run ExecWaitCapture with timeout handling.
+					resultCh := make(chan CommandExecHistory, 1)
+					errCh := make(chan error, 1)
+					go func() {
+						hist, err := m.ExecWaitCapture(command)
+						resultCh <- hist
+						errCh <- err
+					}()
+					select {
+					case <-time.After(time.Duration(cmdTimeout) * time.Second):
+						// Timeout reached – ask user whether to continue waiting.
+						if m.GetExecConfirm() {
+							prompt := fmt.Sprintf("Command timed out after %d seconds. Continue waiting?", cmdTimeout)
+							cont, _ := m.confirmedToExec(command, prompt, true)
+							if cont {
+								// Continue waiting without timeout.
+								_, _ = m.ExecWaitCapture(command)
+							} else {
+								m.Status = ""
+								return false
+							}
+						} else {
+							m.Status = ""
+							return false
+						}
+					case hist := <-resultCh:
+						_ = hist // result ignored for now
+					case err := <-errCh:
+						if err != nil {
+							m.PrintError(err.Error())
+						}
+					}
+				} else {
+					_, _ = m.ExecWaitCapture(command)
+				}
 			} else {
 				_ = system.TmuxSendCommandToPane(m.ExecPane.Id, command, true)
 				time.Sleep(1 * time.Second)
@@ -202,7 +242,7 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 		} else {
 			m.Status = ""
 			return false
-		}
+			}
 	}
 
 	// Process SendKeys

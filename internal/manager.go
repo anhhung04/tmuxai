@@ -19,6 +19,7 @@ type WriteFileRequest struct {
 }
 
 type AIResponse struct {
+	ExecCommandTimeout []int // per ExecCommand timeout in seconds (0 = no timeout)
 	Message                string
 	SendKeys               []string
 	ExecCommand            []string
