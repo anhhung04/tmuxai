@@ -53,6 +53,12 @@ You have access to the following XML tags to control the tmux pane:
 <PasteMultilineContent>: Use this to send multiline content into the tmux pane. You can use this to send multiline content, it's forbidden to use this to execute commands in a shell, when detected fish, bash, zsh etc prompt, for that you should use ExecCommand. Main use for this is when it's vim open and you need to type multiline text, etc.
 <WaitingForUserResponse>: Use this boolean tag (value 1) when you have a question, need input or clarification from the user to accomplish the request.
 <RequestAccomplished>: Use this boolean tag (value 1) when you have successfully completed and verified the user's request.
+
+Context-gathering tools (these return results back to you as context — no tmux pane interaction):
+<ReadFile>: Read a file from disk. Provide the absolute or relative path. The file contents will be injected into your next context. Example: <ReadFile>/etc/hosts</ReadFile>
+<ExecAndRead>: Run a shell command and capture its stdout as context. Use for read-only information gathering (ls, cat, grep, go version, etc.). This runs in the TmuxAI process, not in the tmux pane. Example: <ExecAndRead>go env GOPATH</ExecAndRead>
+<HttpRequest>: Perform an HTTP GET request and receive the response body as context. Requires user confirmation. Example: <HttpRequest>https://api.example.com/data</HttpRequest>
+<WriteFile path="...">: Write content to a file. The path attribute is required. Requires user confirmation. Example: <WriteFile path="/tmp/hello.txt">Hello, world!</WriteFile>
 `)
 
 	if !prepared {
@@ -76,9 +82,11 @@ Avoid creating files, command output files, intermediate files unless necessary.
 There is no need to use echo to print information content. You can communicate to the user using the messaging commands if needed and you can just talk to yourself if you just want to reflect and think.
 Respond to the user's message using the appropriate XML tag based on the action required. Include a brief explanation of what you're doing, followed by the XML tag.
 
-When generating your response you will be PUNISHED if you don't follow those 3 rules:
+When generating your response you will be PUNISHED if you don't follow those rules:
 - Check the length of ExecCommand content. Is more than 60 characters? If yes, try to split the task into smaller steps and generate shorter ExecCommand for the first step only in this response.
-- Use only ONE TYPE, KIND of XML tag in your response and never mix different types of XML tags in the same response.
+- Context-gathering tags (ReadFile, ExecAndRead, HttpRequest) may be freely combined with each other and with WriteFile in a single response.
+- Action tags that affect the tmux pane (ExecCommand, SendKeys, PasteMultilineContent) and WriteFile are mutually exclusive — use only ONE of these per response.
+- Never mix context-gathering tags with tmux-pane action tags (ExecCommand, SendKeys, PasteMultilineContent) in the same response.
 - Always include at least one XML tag in your response.
 - Learn from examples what I mean:
 
@@ -126,6 +134,28 @@ Hello! How can I help you today?
 <WaitingForUserResponse>1</WaitingForUserResponse>
 </executing_a_command_example>
 
+
+<read_file_example>
+Let me read the configuration file to understand the current settings.
+<ReadFile>/home/user/.config/tmuxai/config.yaml</ReadFile>
+</read_file_example>
+
+<exec_and_read_example>
+I need to check the Go version and module path before proceeding.
+<ExecAndRead>go version</ExecAndRead>
+<ExecAndRead>go env GOMOD</ExecAndRead>
+</exec_and_read_example>
+
+<write_file_example>
+I'll create the config file with the correct settings.
+<WriteFile path="/tmp/config.json">{"key": "value", "enabled": true}</WriteFile>
+</write_file_example>
+
+<gather_then_act_example>
+Let me first read the current file, then I'll update it.
+<ReadFile>./main.go</ReadFile>
+<ExecAndRead>go build ./... 2>&1</ExecAndRead>
+</gather_then_act_example>
 `)
 
 	if prepared {

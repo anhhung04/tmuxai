@@ -13,7 +13,6 @@ import (
 // AiClientInterface defines the interface for AI clients to make testing easier
 type AiClientInterface interface {
 	GetResponseFromChatMessages(ctx context.Context, messages []ChatMessage, model string) (string, error)
-	ChatCompletion(ctx context.Context, messages []Message, model string) (string, error)
 }
 
 // MockAiClient is a mock implementation of AiClientInterface for testing
@@ -22,11 +21,6 @@ type MockAiClient struct {
 }
 
 func (m *MockAiClient) GetResponseFromChatMessages(ctx context.Context, messages []ChatMessage, model string) (string, error) {
-	args := m.Called(ctx, messages, model)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockAiClient) ChatCompletion(ctx context.Context, messages []Message, model string) (string, error) {
 	args := m.Called(ctx, messages, model)
 	return args.String(0), args.Error(1)
 }

@@ -202,6 +202,13 @@ func (c *CLIInterface) processInput(input string) {
 		return
 	}
 
+	// Resolve @path references before sending to AI.
+	cwd, _ := os.Getwd()
+	if resolved, refs, _ := resolveAtReferences(input, cwd); len(refs) > 0 {
+		c.printRefSummary(refs)
+		input = resolved
+	}
+
 	// Set up signal handling for Ctrl+C
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
@@ -234,12 +241,52 @@ func (c *CLIInterface) processInput(input string) {
 	signal.Stop(sigChan)
 }
 
+// printRefSummary prints a one-line summary of resolved @-references.
+func (c *CLIInterface) printRefSummary(refs []ResolvedRef) {
+	totalTokens := 0
+	ok := 0
+	for _, r := range refs {
+		if r.Err != nil {
+			c.manager.PrintWarning(fmt.Sprintf("@reference not found: %s (%v)", r.Original, r.Err))
+			continue
+		}
+		totalTokens += r.Tokens
+		ok++
+	}
+	if ok > 0 {
+		label := "reference"
+		if ok != 1 {
+			label = "references"
+		}
+		dimColor := color.New(color.FgCyan)
+		c.manager.Println(dimColor.Sprintf("%d %s resolved  (~%s tokens injected)", ok, label, formatTokenCount(totalTokens)))
+	}
+}
+
+// formatTokenCount formats a token count with thousands separator.
+func formatTokenCount(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%d,%03d", n/1000, n%1000)
+}
+
 // newCompleter creates a completion handler for command completion
 func (c *CLIInterface) newCompleter() *completion.CmdCompletionOrList2 {
 	return &completion.CmdCompletionOrList2{
 		Delimiter: " ",
 		Postfix:   " ",
 		Candidates: func(field []string) (forComp []string, forList []string) {
+			// Handle @path completion
+			if len(field) > 0 {
+				last := field[len(field)-1]
+				if strings.HasPrefix(last, "@") {
+					cwd, _ := os.Getwd()
+					candidates := atPathCandidates(last, cwd)
+					return candidates, candidates
+				}
+			}
+
 			// Handle top-level commands
 			if len(field) == 0 || (len(field) == 1 && !strings.HasSuffix(field[0], " ")) {
 				return commands, commands

@@ -12,6 +12,12 @@ import (
 	"github.com/fatih/color"
 )
 
+// WriteFileRequest holds the path and content for a <WriteFile> tag.
+type WriteFileRequest struct {
+	Path    string
+	Content string
+}
+
 type AIResponse struct {
 	Message                string
 	SendKeys               []string
@@ -21,6 +27,11 @@ type AIResponse struct {
 	ExecPaneSeemsBusy      bool
 	WaitingForUserResponse bool
 	NoComment              bool
+	// Tool tags — gather and write
+	ReadFile    []string           // paths to read
+	ExecAndRead []string           // commands to run and capture
+	HttpRequest []string           // URLs to GET
+	WriteFile   []WriteFileRequest // files to write (requires confirmation)
 }
 
 // Parsed only when pane is prepared
@@ -189,6 +200,10 @@ func (ai *AIResponse) String() string {
 	ExecPaneSeemsBusy: %v
 	WaitingForUserResponse: %v
 	NoComment: %v
+	ReadFile: %v
+	ExecAndRead: %v
+	HttpRequest: %v
+	WriteFile: %v
 `,
 		ai.Message,
 		ai.SendKeys,
@@ -198,5 +213,9 @@ func (ai *AIResponse) String() string {
 		ai.ExecPaneSeemsBusy,
 		ai.WaitingForUserResponse,
 		ai.NoComment,
+		ai.ReadFile,
+		ai.ExecAndRead,
+		ai.HttpRequest,
+		ai.WriteFile,
 	)
 }

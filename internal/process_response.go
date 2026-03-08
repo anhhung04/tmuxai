@@ -7,77 +7,118 @@ import (
 	"strings"
 )
 
-func (m *Manager) parseAIResponse(response string) (AIResponse, error) {
-	// Tag mapping: tag name -> field
-	type tagInfo struct {
+// tagInfo holds a parsed tag's metadata and precompiled regexes.
+type tagInfo struct {
+	name        string
+	isBool      bool
+	setField    func(*AIResponse, string)
+	reMain      *regexp.Regexp // (?s)<Name>(.*?)</Name>
+	reCodeBlock *regexp.Regexp // ```(?:xml)?\s*<Name>...</Name>\s*```
+	reBacktick  *regexp.Regexp // `<Name>...</Name>`
+	reLeftover  *regexp.Regexp // leftover bare tag lines
+	reBoolSpec  *regexp.Regexp // self-closing / empty forms (bool tags only)
+}
+
+// parsedTags is initialised once at startup; all regexes are precompiled.
+var parsedTags = func() []tagInfo {
+	type rawTag struct {
 		name     string
-		isArray  bool
 		isBool   bool
 		setField func(*AIResponse, string)
 	}
-	tags := []tagInfo{
-		{"TmuxSendKeys", true, false, func(r *AIResponse, v string) { r.SendKeys = append(r.SendKeys, v) }},
-		{"ExecCommand", true, false, func(r *AIResponse, v string) { r.ExecCommand = append(r.ExecCommand, v) }},
-		{"PasteMultilineContent", false, false, func(r *AIResponse, v string) { r.PasteMultilineContent = v }},
-		{"RequestAccomplished", false, true, func(r *AIResponse, v string) { r.RequestAccomplished = isTrue(v) }},
-		{"ExecPaneSeemsBusy", false, true, func(r *AIResponse, v string) { r.ExecPaneSeemsBusy = isTrue(v) }},
-		{"WaitingForUserResponse", false, true, func(r *AIResponse, v string) { r.WaitingForUserResponse = isTrue(v) }},
-		{"NoComment", false, true, func(r *AIResponse, v string) { r.NoComment = isTrue(v) }},
+	raw := []rawTag{
+		{"TmuxSendKeys", false, func(r *AIResponse, v string) { r.SendKeys = append(r.SendKeys, v) }},
+		{"ExecCommand", false, func(r *AIResponse, v string) { r.ExecCommand = append(r.ExecCommand, v) }},
+		{"PasteMultilineContent", false, func(r *AIResponse, v string) { r.PasteMultilineContent = v }},
+		{"RequestAccomplished", true, func(r *AIResponse, v string) { r.RequestAccomplished = isTrue(v) }},
+		{"ExecPaneSeemsBusy", true, func(r *AIResponse, v string) { r.ExecPaneSeemsBusy = isTrue(v) }},
+		{"WaitingForUserResponse", true, func(r *AIResponse, v string) { r.WaitingForUserResponse = isTrue(v) }},
+		{"NoComment", true, func(r *AIResponse, v string) { r.NoComment = isTrue(v) }},
+		// Tool tags
+		{"ReadFile", false, func(r *AIResponse, v string) { r.ReadFile = append(r.ReadFile, v) }},
+		{"ExecAndRead", false, func(r *AIResponse, v string) { r.ExecAndRead = append(r.ExecAndRead, v) }},
+		{"HttpRequest", false, func(r *AIResponse, v string) { r.HttpRequest = append(r.HttpRequest, v) }},
 	}
 
+	result := make([]tagInfo, len(raw))
+	for i, t := range raw {
+		result[i] = tagInfo{
+			name:        t.name,
+			isBool:      t.isBool,
+			setField:    t.setField,
+			reMain:      regexp.MustCompile(fmt.Sprintf(`(?s)<%s>(.*?)</%s>`, t.name, t.name)),
+			reCodeBlock: regexp.MustCompile(fmt.Sprintf("(?s)```(?:xml)?\\s*<%s>.*?</%s>\\s*```", t.name, t.name)),
+			reBacktick:  regexp.MustCompile(fmt.Sprintf("`<%s>.*?</%s>`", t.name, t.name)),
+			reLeftover:  regexp.MustCompile(fmt.Sprintf("(?m)^\\s*(<%s>\\s*|```<%s>```)?\\s*$", t.name, t.name)),
+		}
+		if t.isBool {
+			result[i].reBoolSpec = regexp.MustCompile(fmt.Sprintf(
+				"(?s)(<%s>\\s*</%s>|<%s>\\s*|```<%s>```|<%s/>)",
+				t.name, t.name, t.name, t.name, t.name,
+			))
+		}
+	}
+	return result
+}()
+
+// Precompiled WriteFile patterns.
+var (
+	writeFileRe        = regexp.MustCompile(`(?s)<WriteFile\s+path=["']([^"']+)["']>(.*?)</WriteFile>`)
+	writeFileCodeBlock = regexp.MustCompile("(?s)```(?:xml)?\\s*<WriteFile[^>]*>.*?</WriteFile>\\s*```")
+	writeFilePlain     = regexp.MustCompile(`(?s)<WriteFile[^>]*>.*?</WriteFile>`)
+	collapseBlankRe    = regexp.MustCompile(`\n{3,}`)
+)
+
+func (m *Manager) parseAIResponse(response string) (AIResponse, error) {
 	clean := response
-	tagPattern := `(?s)<%s>(.*?)</%s>`
 	r := AIResponse{}
 	cleanForMsg := clean
-	for _, t := range tags {
-		reTag := regexp.MustCompile(fmt.Sprintf(tagPattern, t.name, t.name))
-		tagMatches := reTag.FindAllStringSubmatch(clean, -1)
-		for _, m := range tagMatches {
-			// m[0] is the full match, m[1] is the value
-			if len(m) < 2 {
-				continue // skip invalid match
+
+	for _, t := range parsedTags {
+		for _, match := range t.reMain.FindAllStringSubmatch(clean, -1) {
+			if len(match) < 2 {
+				continue
 			}
-			val := strings.TrimSpace(m[1])
-			// Decode XML entities for non-bool tags
+			val := strings.TrimSpace(match[1])
 			if !t.isBool {
 				val = html.UnescapeString(val)
 			}
-			if t.isArray {
-				t.setField(&r, val)
-			} else {
-				t.setField(&r, val)
-			}
+			t.setField(&r, val)
 		}
-		// For message: remove all tag blocks, including code/backtick wrappers
-		// Remove code block: ```xml\n<tag>...</tag>\n```, ```\n<tag>...</tag>\n```
-		cleanForMsg = regexp.MustCompile(fmt.Sprintf("(?s)```(?:xml)?\\s*<%s>.*?</%s>\\s*```", t.name, t.name)).ReplaceAllString(cleanForMsg, "")
-		// Remove single backtick-wrapped tags: `<Tag>...</Tag>`
-		cleanForMsg = regexp.MustCompile(fmt.Sprintf("`<%s>.*?</%s>`", t.name, t.name)).ReplaceAllString(cleanForMsg, "")
-		// Remove plain tag: <Tag>...</Tag>
-		cleanForMsg = reTag.ReplaceAllString(cleanForMsg, "")
+		// Strip tag blocks from the display message.
+		cleanForMsg = t.reCodeBlock.ReplaceAllString(cleanForMsg, "")
+		cleanForMsg = t.reBacktick.ReplaceAllString(cleanForMsg, "")
+		cleanForMsg = t.reMain.ReplaceAllString(cleanForMsg, "")
 	}
 
-	// Special handling: tags that may appear as <TagName> or ```<TagName>``` (no value)
-	// Set bool fields to true if such tag is present, even if no value
-	for _, t := range tags {
+	// WriteFile has an attribute: <WriteFile path="..."> or <WriteFile path='...'>
+	for _, match := range writeFileRe.FindAllStringSubmatch(clean, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		r.WriteFile = append(r.WriteFile, WriteFileRequest{
+			Path:    strings.TrimSpace(match[1]),
+			Content: html.UnescapeString(match[2]),
+		})
+	}
+	cleanForMsg = writeFileCodeBlock.ReplaceAllString(cleanForMsg, "")
+	cleanForMsg = writeFilePlain.ReplaceAllString(cleanForMsg, "")
+
+	// Special handling: bool tags may appear as <TagName> or ```<TagName>``` (no value).
+	for _, t := range parsedTags {
 		if !t.isBool {
 			continue
 		}
-		// Match <TagName> or ```<TagName>```
-		pat := fmt.Sprintf("(?s)(<%s>\\s*</%s>|<%s>\\s*|```<%s>```|<%s/>)", t.name, t.name, t.name, t.name, t.name)
-		if regexp.MustCompile(pat).MatchString(clean) {
+		if t.reBoolSpec.MatchString(clean) {
 			t.setField(&r, "1")
 		}
 	}
 
-	// Message: trim, collapse multiple newlines
+	// Build display message: trim, collapse excess blank lines, strip leftover tag lines.
 	msg := strings.TrimSpace(cleanForMsg)
-	msg = collapseBlankLines(msg)
-	// Remove any leftover tag lines (e.g. <TagName>) that may not have been removed
-	for _, t := range tags {
-		// Remove lines that are just <TagName> or ```<TagName>```
-		reLeftover := regexp.MustCompile(fmt.Sprintf("(?m)^\\s*(<%s>\\s*|```<%s>```)?\\s*$", t.name, t.name))
-		msg = reLeftover.ReplaceAllString(msg, "")
+	msg = collapseBlankRe.ReplaceAllString(msg, "\n\n")
+	for _, t := range parsedTags {
+		msg = t.reLeftover.ReplaceAllString(msg, "")
 	}
 	msg = strings.TrimSpace(msg)
 	r.Message = msg
@@ -85,22 +126,13 @@ func (m *Manager) parseAIResponse(response string) (AIResponse, error) {
 	return r, nil
 }
 
-// Helper: check if string is "1" or "true" (case-insensitive)
+// isTrue reports whether s represents a truthy value ("1" or "true").
 func isTrue(s string) bool {
 	s = strings.TrimSpace(strings.ToLower(s))
 	return s == "1" || s == "true"
 }
 
-// Collapse multiple blank lines to a single newline
+// collapseBlankLines collapses runs of 3+ newlines to a single blank line.
 func collapseBlankLines(s string) string {
-	return mustCompile(`\n{2,}`).ReplaceAllString(s, "\n")
-}
-
-// mustCompile is a helper for regexp.MustCompile
-func mustCompile(expr string) *regexp.Regexp {
-	re, err := regexp.Compile(expr)
-	if err != nil {
-		panic(err)
-	}
-	return re
+	return collapseBlankRe.ReplaceAllString(s, "\n\n")
 }

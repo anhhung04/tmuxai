@@ -45,7 +45,7 @@ func TestParseAIResponse_MultipleTags_MixedContent(t *testing.T) {
 	m := &Manager{}
 	input := "Here is some lines and than the tag.\n```\n<TmuxSendKeys>SOmething</TmuxSendKeys>\n```\nMore content\n```<ExecPaneSeemsBusy>```"
 	want := AIResponse{
-		Message:           "Here is some lines and than the tag.\nMore content",
+		Message:           "Here is some lines and than the tag.\n\nMore content",
 		SendKeys:          []string{"SOmething"},
 		ExecPaneSeemsBusy: true,
 	}
@@ -241,7 +241,7 @@ func TestParseAIResponse_MixedAIAndNonAIXMLTags(t *testing.T) {
 	m := &Manager{}
 	input := "Message before.\n<TmuxSendKeys>foo</TmuxSendKeys>\n```\n<NotAIResponse>foo</NotAIResponse>\n```\n<MessageTag>bar</MessageTag>\n<RequestAccomplished>1</RequestAccomplished>\nAfter."
 	want := AIResponse{
-		Message:             "Message before.\n```\n<NotAIResponse>foo</NotAIResponse>\n```\n<MessageTag>bar</MessageTag>\nAfter.",
+		Message:             "Message before.\n\n```\n<NotAIResponse>foo</NotAIResponse>\n```\n<MessageTag>bar</MessageTag>\n\nAfter.",
 		SendKeys:            []string{"foo"},
 		RequestAccomplished: true,
 	}

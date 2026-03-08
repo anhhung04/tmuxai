@@ -10,6 +10,12 @@ import (
 	"github.com/briandowns/spinner"
 )
 
+type contextKey int
+
+const toolDepthKey contextKey = iota
+
+const maxToolRounds = 10
+
 // Main function to process regular user messages
 // Returns true if the request was accomplished and no further processing should happen
 func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
@@ -154,6 +160,26 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 		m.Messages = append(m.Messages, currentMessage, responseMsg)
 	}
 
+	// Tool-tag gather phase: ReadFile, ExecAndRead, HttpRequest, WriteFile.
+	// Results are injected back as the next user message so the AI can act on them.
+	hasToolTags := len(r.ReadFile) > 0 || len(r.ExecAndRead) > 0 ||
+		len(r.HttpRequest) > 0 || len(r.WriteFile) > 0
+	if hasToolTags {
+		depth, _ := ctx.Value(toolDepthKey).(int)
+		if depth >= maxToolRounds {
+			m.PrintError(fmt.Sprintf("Tool-tag loop exceeded %d rounds; stopping to avoid infinite recursion.", maxToolRounds))
+			return false
+		}
+		results, aborted := m.executeToolTags(ctx, r)
+		if aborted {
+			return false
+		}
+		if len(results) > 0 {
+			injectionMsg := buildInjectionMessage(results)
+			return m.ProcessUserMessage(context.WithValue(ctx, toolDepthKey, depth+1), injectionMsg)
+		}
+	}
+
 	// observe/prepared mode
 	for _, execCommand := range r.ExecCommand {
 		code, _ := system.HighlightCode("sh", execCommand)
@@ -222,10 +248,7 @@ func (m *Manager) ProcessUserMessage(ctx context.Context, message string) bool {
 
 	if r.ExecPaneSeemsBusy {
 		m.Countdown(m.GetWaitInterval())
-		// Create a new context for this recursive call
-		newCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		accomplished := m.ProcessUserMessage(newCtx, "waited for 5 more seconds, here is the current pane(s) content")
+		accomplished := m.ProcessUserMessage(ctx, "waited for 5 more seconds, here is the current pane(s) content")
 		if accomplished {
 			return true
 		}
@@ -303,7 +326,7 @@ func (m *Manager) startWatchMode(desc string) {
 }
 
 func (m *Manager) aiFollowedGuidelines(r AIResponse) (string, bool) {
-	// Check if only one boolean is true in AI response
+	// At most one boolean flag set.
 	boolCount := 0
 	if r.RequestAccomplished {
 		boolCount++
@@ -317,31 +340,40 @@ func (m *Manager) aiFollowedGuidelines(r AIResponse) (string, bool) {
 	if r.NoComment {
 		boolCount++
 	}
-
 	if boolCount > 1 {
 		return "You didn't follow the guidelines. Only one boolean flag should be set to true in your response. Pay attention!", false
 	}
 
-	// Check if only one tag is used
-	tags := []int{len(r.ExecCommand), len(r.SendKeys)}
+	// Tmux-action tags are mutually exclusive among themselves and with WriteFile.
+	tmuxOnlyCount := 0
+	if len(r.ExecCommand) > 0 {
+		tmuxOnlyCount++
+	}
+	if len(r.SendKeys) > 0 {
+		tmuxOnlyCount++
+	}
 	if r.PasteMultilineContent != "" {
-		tags = append(tags, 1)
-	} else {
-		tags = append(tags, 0)
+		tmuxOnlyCount++
 	}
-	count := 0
-	for _, len := range tags {
-		if len > 0 {
-			count++
-		}
+	hasWriteFile := len(r.WriteFile) > 0
+	tmuxActionCount := tmuxOnlyCount
+	if hasWriteFile {
+		tmuxActionCount++
 	}
-
-	if count > 1 {
-		return "You didn't follow the guidelines. You can only use one type of XML tag in your response. Pay attention!", false
+	if tmuxActionCount > 1 {
+		return "You didn't follow the guidelines. You must only use one type of XML tag per response (ExecCommand, SendKeys, PasteMultilineContent, or WriteFile). Pay attention!", false
 	}
 
-	// watch mode has no xml tags, otherwise should be at least 1 xml tag in response
-	if !m.WatchMode && count+boolCount == 0 {
+	// Gather tags (ReadFile, ExecAndRead, HttpRequest) may mix freely with each other
+	// and with WriteFile, but not with tmux-action tags.
+	gatherCount := len(r.ReadFile) + len(r.ExecAndRead) + len(r.HttpRequest)
+	if gatherCount > 0 && tmuxOnlyCount > 0 {
+		return "You didn't follow the guidelines. Do not mix ReadFile/ExecAndRead/HttpRequest gather tags with ExecCommand/SendKeys/PasteMultilineContent in the same response. Pay attention!", false
+	}
+
+	// At least one tag must be present (gather tags count toward this).
+	totalCount := tmuxActionCount + boolCount + gatherCount
+	if !m.WatchMode && totalCount == 0 {
 		return "You didn't follow the guidelines. You must use at least one XML tag in your response. Pay attention!", false
 	}
 
