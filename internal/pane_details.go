@@ -40,9 +40,7 @@ func (m *Manager) getTmuxPanesInXmlFn(config *config.Config) string {
 		}
 	}
 	for _, pane := range filteredPanes {
-		if !pane.IsTmuxAiPane {
-			pane.Refresh(m.GetMaxCaptureLines())
-		}
+		pane.Refresh(m.GetMaxCaptureLines())
 		if pane.IsTmuxAiExecPane {
 			m.ExecPane = &pane
 		}

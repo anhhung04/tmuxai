@@ -3,8 +3,6 @@ package internal
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -30,91 +28,6 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-// ChatCompletionRequest represents a request to the chat completion API
-type ChatCompletionRequest struct {
-	Model    string    `json:"model,omitempty"`
-	Messages []Message `json:"messages"`
-}
-
-// ChatCompletionChoice represents a choice in the chat completion response
-type ChatCompletionChoice struct {
-	Index   int     `json:"index"`
-	Message Message `json:"message"`
-}
-
-// ChatCompletionResponse represents a response from the chat completion API
-type ChatCompletionResponse struct {
-	ID      string                 `json:"id"`
-	Object  string                 `json:"object"`
-	Created int64                  `json:"created"`
-	Choices []ChatCompletionChoice `json:"choices"`
-}
-
-// Responses API Types
-
-// ResponseInput represents the input for the Responses API
-type ResponseInput interface{}
-
-// ResponseContent represents content in the Responses API
-type ResponseContent struct {
-	Type        string        `json:"type"`
-	Text        string        `json:"text,omitempty"`
-	Annotations []interface{} `json:"annotations,omitempty"`
-}
-
-// ResponseOutputItem represents an output item in the Responses API
-type ResponseOutputItem struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`             // "message", "reasoning", "function_call", etc.
-	Status  string            `json:"status,omitempty"` // "completed", "in_progress", etc.
-	Content []ResponseContent `json:"content,omitempty"`
-	Role    string            `json:"role,omitempty"` // "assistant", "user", etc.
-	Summary []interface{}     `json:"summary,omitempty"`
-}
-
-// ResponseRequest represents a request to the Responses API
-type ResponseRequest struct {
-	Model              string                 `json:"model"`
-	Input              ResponseInput          `json:"input"`
-	Instructions       string                 `json:"instructions,omitempty"`
-	Tools              []interface{}          `json:"tools,omitempty"`
-	PreviousResponseID string                 `json:"previous_response_id,omitempty"`
-	Store              bool                   `json:"store,omitempty"`
-	Include            []string               `json:"include,omitempty"`
-	Text               map[string]interface{} `json:"text,omitempty"` // for structured outputs
-}
-
-// Response represents a response from the Responses API
-type Response struct {
-	ID         string               `json:"id"`
-	Object     string               `json:"object"`
-	CreatedAt  int64                `json:"created_at"`
-	Model      string               `json:"model"`
-	Output     []ResponseOutputItem `json:"output"`
-	OutputText string               `json:"output_text,omitempty"`
-	Error      *ResponseError       `json:"error,omitempty"`
-	Usage      *ResponseUsage       `json:"usage,omitempty"`
-}
-
-// ResponseError represents an error in the Responses API
-type ResponseError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Code    string `json:"code,omitempty"`
-}
-
-// ResponseUsage represents token usage in the Responses API
-type ResponseUsage struct {
-	InputTokens     int `json:"input_tokens"`
-	OutputTokens    int `json:"output_tokens"`
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
-	TotalTokens     int `json:"total_tokens"`
-}
-
-// readResponseBody reads the entire response body and returns it.
-func (c *AiClient) readResponseBody(resp *http.Response) ([]byte, error) {
-	return io.ReadAll(resp.Body)
-}
 
 func NewAiClient(cfg *config.Config) *AiClient {
 	return &AiClient{
@@ -140,26 +53,22 @@ func (c *AiClient) determineAPIType(model string) string {
 	return "openai"
 }
 
+// chatMessageRole returns the role string for a chat message given its index.
+func chatMessageRole(msg ChatMessage, index int) string {
+	if index == 0 && !msg.FromUser {
+		return "system"
+	}
+	if msg.FromUser {
+		return "user"
+	}
+	return "assistant"
+}
+
 // GetResponseFromChatMessages gets a response from the AI based on chat messages
 func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages []ChatMessage, model string) (string, error) {
-	// Convert chat messages to AI client format
-	aiMessages := []Message{}
-
+	aiMessages := make([]Message, len(chatMessages))
 	for i, msg := range chatMessages {
-		var role string
-
-		if i == 0 && !msg.FromUser {
-			role = "system"
-		} else if msg.FromUser {
-			role = "user"
-		} else {
-			role = "assistant"
-		}
-
-		aiMessages = append(aiMessages, Message{
-			Role:    role,
-			Content: msg.Content,
-		})
+		aiMessages[i] = Message{Role: chatMessageRole(msg, i), Content: msg.Content}
 	}
 
 	logger.Info("Sending %d messages to AI using model: %s", len(aiMessages), model)
@@ -188,9 +97,8 @@ func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages
 	return response, nil
 }
 
-// OpenAIChat sends a chat completion request using the official OpenAI Go SDK.
-func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model string) (string, error) {
-	// Resolve configuration for the selected model.
+// newOpenAIClient builds an OpenAI SDK client from the active model configuration.
+func (c *AiClient) newOpenAIClient() *openai.Client {
 	var apiKey, baseURL string
 	if c.configMgr != nil {
 		if mc, ok := c.configMgr.GetCurrentModelConfig(); ok {
@@ -211,21 +119,28 @@ func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model str
 	}
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
-	client := openai.NewClientWithConfig(cfg)
+	return openai.NewClientWithConfig(cfg)
+}
 
-	// Convert internal Message structs to OpenAI SDK message format.
-	var oaMsgs []openai.ChatCompletionMessage
-	for _, m := range messages {
+// toOpenAIMessages converts internal Message structs to the OpenAI SDK format.
+func toOpenAIMessages(messages []Message) []openai.ChatCompletionMessage {
+	oaMsgs := make([]openai.ChatCompletionMessage, len(messages))
+	for i, m := range messages {
 		role := openai.ChatMessageRoleAssistant
 		if m.Role == "user" {
 			role = openai.ChatMessageRoleUser
 		} else if m.Role == "system" {
 			role = openai.ChatMessageRoleSystem
 		}
-		oaMsgs = append(oaMsgs, openai.ChatCompletionMessage{Role: role, Content: m.Content})
+		oaMsgs[i] = openai.ChatCompletionMessage{Role: role, Content: m.Content}
 	}
+	return oaMsgs
+}
 
-	req := openai.ChatCompletionRequest{Model: model, Messages: oaMsgs}
+// OpenAIChat sends a chat completion request using the official OpenAI Go SDK.
+func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model string) (string, error) {
+	client := c.newOpenAIClient()
+	req := openai.ChatCompletionRequest{Model: model, Messages: toOpenAIMessages(messages)}
 	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		logger.Error("OpenAI request failed: %v", err)
@@ -238,73 +153,6 @@ func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model str
 	content := resp.Choices[0].Message.Content
 	logger.Debug("Received OpenAI response (%d characters)", len(content))
 	return content, nil
-}
-
-// ChatCompletion sends a chat completion request using the official OpenAI SDK.
-// It mirrors the previous custom implementation but now relies on the SDK for reliability.
-func (c *AiClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (ChatCompletionResponse, error) {
-	// Resolve API key and base URL the same way OpenAIChat does.
-	var apiKey, baseURL string
-	if c.configMgr != nil {
-		if mc, ok := c.configMgr.GetCurrentModelConfig(); ok {
-			if mc.Provider == "openai" || mc.Provider == "azure" || mc.Provider == "openrouter" {
-				apiKey = mc.APIKey
-				baseURL = mc.BaseURL
-			}
-		}
-	}
-	if apiKey == "" {
-		apiKey = c.config.OpenAI.APIKey
-	}
-	if baseURL == "" {
-		baseURL = c.config.OpenAI.BaseURL
-	}
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
-	client := openai.NewClientWithConfig(cfg)
-
-	// Convert request messages to SDK format.
-	oaMsgs := make([]openai.ChatCompletionMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		role := openai.ChatMessageRoleAssistant
-		if m.Role == "user" {
-			role = openai.ChatMessageRoleUser
-		} else if m.Role == "system" {
-			role = openai.ChatMessageRoleSystem
-		}
-		oaMsgs[i] = openai.ChatCompletionMessage{Role: role, Content: m.Content}
-	}
-
-	oaReq := openai.ChatCompletionRequest{Model: req.Model, Messages: oaMsgs}
-	resp, err := client.CreateChatCompletion(ctx, oaReq)
-	if err != nil {
-		logger.Error("OpenAI request failed: %v", err)
-		return ChatCompletionResponse{}, fmt.Errorf("openai request error: %w", err)
-	}
-	if len(resp.Choices) == 0 {
-		return ChatCompletionResponse{}, fmt.Errorf("no completion choices returned (model: %s)", req.Model)
-	}
-
-	choice := resp.Choices[0]
-	cResp := ChatCompletionResponse{
-		ID:      resp.ID,
-		Object:  resp.Object,
-		Created: resp.Created,
-		Choices: []ChatCompletionChoice{{
-			Index:   choice.Index,
-			Message: Message{Role: string(choice.Message.Role), Content: choice.Message.Content},
-		}},
-	}
-	return cResp, nil
-}
-
-// Response sends a request to the OpenAI Responses API (legacy wrapper).
-func (c *AiClient) Response(ctx context.Context, messages []Message, model string) (string, error) {
-	// For backward compatibility, delegate to OpenAIChat which now uses the official SDK.
-	return c.OpenAIChat(ctx, messages, model)
 }
 
 // getOrCreateGeminiClient creates or returns the cached Gemini client
@@ -444,13 +292,7 @@ func debugChatMessages(chatMessages []ChatMessage, response string) {
 	_, _ = file.WriteString("==================    SENT CHAT MESSAGES ==================\n\n")
 
 	for i, msg := range chatMessages {
-		role := "assistant"
-		if msg.FromUser {
-			role = "user"
-		}
-		if i == 0 && !msg.FromUser {
-			role = "system"
-		}
+		role := chatMessageRole(msg, i)
 		timeStr := msg.Timestamp.Format(time.RFC3339)
 
 		_, _ = fmt.Fprintf(file, "Message %d: Role=%s, Time=%s\n", i+1, role, timeStr)

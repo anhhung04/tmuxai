@@ -73,46 +73,26 @@ func (m *Manager) ProcessSubCommand(command string) {
 		return
 
 	case prefixMatch(commandPrefix, "/prepare"):
-		supportedShells := []string{"bash", "zsh", "fish"}
 		m.InitExecPane()
 
-		// Check if exec pane is a subshell
 		if m.ExecPane.IsSubShell {
-			if len(parts) > 1 {
-				shell := parts[1]
-				isSupported := false
-				for _, supportedShell := range supportedShells {
-					if shell == supportedShell {
-						isSupported = true
-						break
-					}
-				}
-				if !isSupported {
-					m.Println(fmt.Sprintf("Shell '%s' is not supported. Supported shells are: %s", shell, strings.Join(supportedShells, ", ")))
-					return
-				}
-				m.PrepareExecPaneWithShell(shell)
-			} else {
+			if len(parts) < 2 {
 				m.Println("Shell detection is not supported on subshells.")
 				m.Println("Please specify the shell manually: /prepare bash, /prepare zsh, or /prepare fish")
 				return
 			}
+			if !isSupportedShell(parts[1]) {
+				m.Println(fmt.Sprintf("Shell '%s' is not supported. Supported shells are: bash, zsh, fish", parts[1]))
+				return
+			}
+			m.PrepareExecPaneWithShell(parts[1])
 		} else {
 			if len(parts) > 1 {
-				shell := parts[1]
-				isSupported := false
-				for _, supportedShell := range supportedShells {
-					if shell == supportedShell {
-						isSupported = true
-						break
-					}
-				}
-
-				if !isSupported {
-					m.Println(fmt.Sprintf("Shell '%s' is not supported. Supported shells are: %s", shell, strings.Join(supportedShells, ", ")))
+				if !isSupportedShell(parts[1]) {
+					m.Println(fmt.Sprintf("Shell '%s' is not supported. Supported shells are: bash, zsh, fish", parts[1]))
 					return
 				}
-				m.PrepareExecPaneWithShell(shell)
+				m.PrepareExecPaneWithShell(parts[1])
 			} else {
 				m.PrepareExecPane()
 			}
@@ -310,9 +290,19 @@ Watch for: ` + watchDesc
 	}
 }
 
-// Helper function to check if a command matches a prefix
-func prefixMatch(command, target string) bool {
-	return strings.HasPrefix(target, command)
+// prefixMatch reports whether full starts with prefix (supports partial command input like "/h" → "/help").
+func prefixMatch(prefix, full string) bool {
+	return strings.HasPrefix(full, prefix)
+}
+
+// isSupportedShell reports whether shell is one of the supported shells.
+func isSupportedShell(shell string) bool {
+	for _, s := range []string{"bash", "zsh", "fish"} {
+		if shell == s {
+			return true
+		}
+	}
+	return false
 }
 
 // formats system information and tmux details into a readable string

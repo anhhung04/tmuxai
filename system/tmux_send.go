@@ -58,6 +58,22 @@ var TmuxSendCommandToPane = func(paneId string, command string, autoenter bool) 
 	return nil
 }
 
+// specialKeys is the set of tmux special key names, built once at startup.
+var specialKeys = func() map[string]bool {
+	m := map[string]bool{
+		"Up": true, "Down": true, "Left": true, "Right": true,
+		"BSpace": true, "BTab": true, "DC": true, "End": true,
+		"Enter": true, "Escape": true, "Home": true, "IC": true,
+		"NPage": true, "PageDown": true, "PgDn": true,
+		"PPage": true, "PageUp": true, "PgUp": true,
+		"Space": true, "Tab": true,
+	}
+	for i := 1; i <= 12; i++ {
+		m[fmt.Sprintf("F%d", i)] = true
+	}
+	return m
+}()
+
 // containsSpecialKey checks if a string contains any tmux special key notation
 func containsSpecialKey(line string) bool {
 	// Check for control or meta key combinations
@@ -66,7 +82,7 @@ func containsSpecialKey(line string) bool {
 	}
 
 	// Check for special key names
-	for key := range getSpecialKeys() {
+	for key := range specialKeys {
 		if strings.Contains(line, key) {
 			return true
 		}
@@ -95,7 +111,7 @@ func processLineWithSpecialKeys(line string) []string {
 
 		// Check if this part is a special key
 		if (strings.HasPrefix(part, "C-") || strings.HasPrefix(part, "M-")) ||
-			getSpecialKeys()[part] {
+			specialKeys[part] {
 			// If we have accumulated text, add it first
 			if currentText != "" {
 				result = append(result, currentText)
@@ -120,21 +136,3 @@ func processLineWithSpecialKeys(line string) []string {
 	return result
 }
 
-// getSpecialKeys returns a map of tmux special key names
-func getSpecialKeys() map[string]bool {
-	specialKeys := map[string]bool{
-		"Up": true, "Down": true, "Left": true, "Right": true,
-		"BSpace": true, "BTab": true, "DC": true, "End": true,
-		"Enter": true, "Escape": true, "Home": true, "IC": true,
-		"NPage": true, "PageDown": true, "PgDn": true,
-		"PPage": true, "PageUp": true, "PgUp": true,
-		"Space": true, "Tab": true,
-	}
-
-	// Add function keys F1-F12
-	for i := 1; i <= 12; i++ {
-		specialKeys[fmt.Sprintf("F%d", i)] = true
-	}
-
-	return specialKeys
-}

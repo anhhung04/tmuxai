@@ -73,7 +73,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	}
 
 	aiClient := NewAiClient(cfg)
-	os := system.GetOSDetails()
+	osDetails := system.GetOSDetails()
 
 	manager := &Manager{
 		Config:           cfg,
@@ -81,7 +81,7 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		PaneId:           paneId,
 		Messages:         []ChatMessage{},
 		ExecPane:         &system.TmuxPaneDetails{},
-		OS:               os,
+		OS:               osDetails,
 		SessionOverrides: make(map[string]interface{}),
 		LoadedKBs:        make(map[string]string),
 	}

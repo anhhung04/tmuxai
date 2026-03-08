@@ -37,13 +37,6 @@ func (f *InfoFormatter) FormatSection(title string) string {
 		f.NeutralColor.Sprint(strings.Repeat("─", len(title))))
 }
 
-// FormatKeyValue prints a key-value pair with consistent formatting
-func (f *InfoFormatter) FormatKeyValue(key string, value interface{}) string {
-	return fmt.Sprintf("%s %s\n",
-		f.LabelColor.Sprintf("%-16s:", key),
-		fmt.Sprint(value))
-}
-
 // FormatProgressBar generates a visual indicator for percentage values
 func (f *InfoFormatter) FormatProgressBar(percent float64, width int) string {
 	if width <= 0 {

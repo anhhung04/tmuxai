@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"reflect"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -165,87 +163,6 @@ func GetOSDetails() string {
 	return runtime.GOOS + " - " + runtime.GOARCH
 }
 
-// structToMap flattens a struct to a map[string]interface{} recursively
-func StructToMap(s interface{}, prefix string) map[string]interface{} {
-	result := make(map[string]interface{})
-	val := reflect.ValueOf(s)
-	typ := reflect.TypeOf(s)
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		tag := field.Tag.Get("mapstructure")
-		if tag == "" {
-			tag = strings.ToLower(field.Name)
-		}
-		key := tag
-		if prefix != "" {
-			key = prefix + "." + tag
-		}
-		fv := val.Field(i)
-		if field.Type.Kind() == reflect.Struct {
-			nested := StructToMap(fv.Interface(), key)
-			for nk, nv := range nested {
-				result[nk] = nv
-			}
-		} else {
-			result[key] = fv.Interface()
-		}
-	}
-	return result
-}
-
-// setMapValueByDotKey sets a value in a map using dot notation keys
-func SetMapValueByDotKey(m map[string]interface{}, key string, value interface{}) {
-	m[key] = value
-}
-
-// printMapAsYAML prints a map[string]interface{} as YAML-like output with sorted keys
-func PrintMapAsYAML(m map[string]interface{}, indent int) {
-	// Group keys by prefix for pretty printing
-	type node struct {
-		val      interface{}
-		children map[string]*node
-	}
-	root := &node{children: map[string]*node{}}
-	for k, v := range m {
-		parts := strings.Split(k, ".")
-		cur := root
-		for i, part := range parts {
-			if cur.children == nil {
-				cur.children = map[string]*node{}
-			}
-			if _, ok := cur.children[part]; !ok {
-				cur.children[part] = &node{}
-			}
-			cur = cur.children[part]
-			if i == len(parts)-1 {
-				cur.val = v
-			}
-		}
-	}
-	var printNode func(n *node, indent int)
-	printNode = func(n *node, indent int) {
-		ind := strings.Repeat("  ", indent)
-
-		// Get all keys and sort them
-		keys := make([]string, 0, len(n.children))
-		for k := range n.children {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		// Iterate through sorted keys
-		for _, k := range keys {
-			child := n.children[k]
-			if len(child.children) > 0 {
-				fmt.Printf("%s%s:", ind, k)
-				printNode(child, indent+1)
-			} else {
-				fmt.Printf("%s%s: %v\n", ind, k, child.val)
-			}
-		}
-	}
-	printNode(root, indent)
-}
 
 // EstimateTokenCount provides a rough estimation of token count for LLM context
 // This is an approximation and not exact for all models

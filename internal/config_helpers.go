@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/anhhung04/tmuxai/config"
@@ -197,14 +198,7 @@ func (m *Manager) GetAvailableModels() []string {
 	for name := range m.Config.Models {
 		models = append(models, name)
 	}
-	// Sort the models alphabetically for consistent ordering
-	for i := 0; i < len(models); i++ {
-		for j := i + 1; j < len(models); j++ {
-			if models[i] > models[j] {
-				models[i], models[j] = models[j], models[i]
-			}
-		}
-	}
+	sort.Strings(models)
 	return models
 }
 
