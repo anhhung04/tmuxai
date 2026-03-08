@@ -1,20 +1,16 @@
 package internal
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/anhhung04/tmuxai/config"
 	"github.com/anhhung04/tmuxai/logger"
+	"github.com/sashabaranov/go-openai"
 	"google.golang.org/genai"
 )
 
@@ -22,7 +18,6 @@ import (
 type AiClient struct {
 	config       *config.Config
 	configMgr    *Manager // To access model configuration methods
-	client       *http.Client
 	geminiClient *genai.Client
 	geminiMu     sync.Mutex
 }
@@ -121,43 +116,6 @@ func NewAiClient(cfg *config.Config) *AiClient {
 	}
 }
 
-// readResponseBody handles both plain JSON and SSE‑style streaming responses.
-// It returns a clean JSON payload ready for unmarshalling.
-func (c *AiClient) readResponseBody(resp *http.Response) ([]byte, error) {
-	contentType := resp.Header.Get("Content-Type")
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	// If not an SSE stream and no "data:" markers, assume plain JSON.
-	if !strings.Contains(contentType, "text/event-stream") && !bytes.Contains(rawBody, []byte("data:")) {
-		return rawBody, nil
-	}
-
-	// Parse SSE lines.
-	var buf bytes.Buffer
-	scanner := bufio.NewScanner(bytes.NewReader(rawBody))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "data:") {
-			payload := strings.TrimPrefix(line, "data:")
-			payload = strings.TrimSpace(payload)
-			if payload == "[DONE]" || payload == "" {
-				continue
-			}
-			buf.WriteString(payload)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading SSE payload: %w", err)
-	}
-	if buf.Len() == 0 {
-		// No SSE payload found – fall back to raw body.
-		return rawBody, nil
-	}
-	return buf.Bytes(), nil
-}
 
 // SetConfigManager sets the configuration manager for accessing model configurations
 func (c *AiClient) SetConfigManager(mgr *Manager) {
@@ -166,37 +124,15 @@ func (c *AiClient) SetConfigManager(mgr *Manager) {
 
 // determineAPIType determines which API to use based on the model and configuration
 func (c *AiClient) determineAPIType(model string) string {
-	// If we have a config manager, try to get the current model configuration
+	// Simplified: always use OpenAI compatible client for non‑Gemini providers.
 	if c.configMgr != nil {
 		if modelConfig, exists := c.configMgr.GetCurrentModelConfig(); exists {
-			switch modelConfig.Provider {
-			case "openai":
-				return "responses"
-			case "azure":
-				return "azure"
-			case "openrouter":
-				return "openrouter"
-			case "gemini":
+			if modelConfig.Provider == "gemini" {
 				return "gemini"
-			default:
-				return "openrouter"
 			}
 		}
 	}
-
-	// Fallback to legacy configuration
-	// If OpenAI API key is configured, use Responses API
-	if c.config.OpenAI.APIKey != "" {
-		return "responses"
-	}
-
-	// If Azure OpenAI is configured, use Azure Chat Completions
-	if c.config.AzureOpenAI.APIKey != "" {
-		return "azure"
-	}
-
-	// Default to OpenRouter Chat Completions
-	return "openrouter"
+	return "openai"
 }
 
 // GetResponseFromChatMessages gets a response from the AI based on chat messages
@@ -233,11 +169,11 @@ func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages
 
 	switch apiType {
 	case "responses":
-		response, err = c.Response(ctx, aiMessages, model)
+		response, err = c.OpenAIChat(ctx, aiMessages, model)
 	case "azure":
-		response, err = c.ChatCompletion(ctx, aiMessages, model)
+		response, err = c.OpenAIChat(ctx, aiMessages, model)
 	case "openrouter":
-		response, err = c.ChatCompletion(ctx, aiMessages, model)
+		response, err = c.OpenAIChat(ctx, aiMessages, model)
 	case "gemini":
 		response, err = c.GeminiGenerateContent(ctx, aiMessages, model)
 	default:
@@ -251,146 +187,56 @@ func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages
 	return response, nil
 }
 
-// ChatCompletion sends a chat completion request to the OpenRouter API
-func (c *AiClient) ChatCompletion(ctx context.Context, messages []Message, model string) (string, error) {
-	reqBody := ChatCompletionRequest{
-		Model:    model,
-		Messages: messages,
-	}
-
-	// Get model configuration
-	var provider string
-	var apiKey string
-	var baseURL string
-	var apiBase string
-	var apiVersion string
-	var deploymentName string
-
-	// Try to get model configuration
+// OpenAIChat sends a chat completion request using the official OpenAI Go SDK.
+func (c *AiClient) OpenAIChat(ctx context.Context, messages []Message, model string) (string, error) {
+	// Resolve configuration for the selected model.
+	var apiKey, baseURL string
 	if c.configMgr != nil {
-		if modelConfig, exists := c.configMgr.GetCurrentModelConfig(); exists {
-			provider = modelConfig.Provider
-			apiKey = modelConfig.APIKey
-			baseURL = modelConfig.BaseURL
-			apiBase = modelConfig.APIBase
-			apiVersion = modelConfig.APIVersion
-			deploymentName = modelConfig.DeploymentName
+		if mc, ok := c.configMgr.GetCurrentModelConfig(); ok {
+			if mc.Provider == "openai" || mc.Provider == "azure" || mc.Provider == "openrouter" {
+				apiKey = mc.APIKey
+				baseURL = mc.BaseURL
+			}
 		}
 	}
+	if apiKey == "" {
+		apiKey = c.config.OpenAI.APIKey
+	}
+	if baseURL == "" {
+		baseURL = c.config.OpenAI.BaseURL
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	cfg := openai.DefaultConfig(apiKey)
+	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
+	client := openai.NewClientWithConfig(cfg)
 
-	// Fallback to legacy configuration if no model config found
-	if provider == "" {
-		if c.config.AzureOpenAI.APIKey != "" {
-			provider = "azure"
-			apiKey = c.config.AzureOpenAI.APIKey
-			apiBase = c.config.AzureOpenAI.APIBase
-			apiVersion = c.config.AzureOpenAI.APIVersion
-			deploymentName = c.config.AzureOpenAI.DeploymentName
-		} else if c.config.OpenRouter.APIKey != "" {
-			provider = "openrouter"
-			apiKey = c.config.OpenRouter.APIKey
-			baseURL = c.config.OpenRouter.BaseURL
+	// Convert internal Message structs to OpenAI SDK message format.
+	var oaMsgs []openai.ChatCompletionMessage
+	for _, m := range messages {
+		role := openai.ChatMessageRoleAssistant
+		if m.Role == "user" {
+			role = openai.ChatMessageRoleUser
+		} else if m.Role == "system" {
+			role = openai.ChatMessageRoleSystem
 		}
+		oaMsgs = append(oaMsgs, openai.ChatCompletionMessage{Role: role, Content: m.Content})
 	}
 
-	// determine endpoint and headers based on configuration
-	var url string
-	var apiKeyHeader string
-
-	if provider == "azure" {
-		// Use Azure OpenAI endpoint
-		base := strings.TrimSuffix(apiBase, "/")
-		url = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-			base,
-			deploymentName,
-			apiVersion)
-		apiKeyHeader = "api-key"
-
-		// Azure endpoint doesn't expect model in body
-		reqBody.Model = ""
-	} else {
-		// default OpenRouter/OpenAI compatible endpoint
-		if baseURL == "" {
-			baseURL = c.config.OpenRouter.BaseURL
-		}
-		base := strings.TrimSuffix(baseURL, "/")
-		url = base + "/chat/completions"
-		apiKeyHeader = "Authorization"
-		apiKey = "Bearer " + apiKey
-	}
-
-	reqJSON, err := json.Marshal(reqBody)
+	req := openai.ChatCompletionRequest{Model: model, Messages: oaMsgs}
+	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
-		logger.Error("Failed to marshal request: %v", err)
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		logger.Error("OpenAI request failed: %v", err)
+		return "", fmt.Errorf("openai request error: %w", err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqJSON))
-	if err != nil {
-		logger.Error("Failed to create request: %v", err)
-		return "", fmt.Errorf("failed to create request: %w", err)
+	if len(resp.Choices) == 0 {
+		logger.Error("OpenAI returned no choices")
+		return "", fmt.Errorf("no completion choices returned (model: %s)", model)
 	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(apiKeyHeader, apiKey)
-
-	req.Header.Set("HTTP-Referer", "https://github.com/anhhung04/tmuxai")
-	req.Header.Set("X-Title", "TmuxAI")
-
-	// Add GitHub Copilot-specific headers when using Copilot API
-	if strings.Contains(url, "githubcopilot.com") {
-		req.Header.Set("editor-version", "tmuxai/"+Version)
-		req.Header.Set("copilot-integration-id", "vscode-chat")
-	}
-
-	// Log the request details for debugging before sending
-	logger.Debug("Sending API request to: %s with model: %s", url, model)
-
-	// Send the request
-	resp, err := c.client.Do(req)
-	if err != nil {
-		if ctx.Err() == context.Canceled {
-			return "", fmt.Errorf("request canceled: %w", ctx.Err())
-		}
-		logger.Error("Failed to send request: %v", err)
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Read and clean the response (handle plain JSON or SSE streams)
-	cleanBody, err := c.readResponseBody(resp)
-	if err != nil {
-		logger.Error("Failed to read response: %v", err)
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Log the cleaned response for debugging
-	logger.Debug("API response status: %d, cleaned response size: %d bytes", resp.StatusCode, len(cleanBody))
-	trimmedBody := cleanBody
-	// Check for errors
-	if resp.StatusCode != http.StatusOK {
-		logger.Error("API returned error: %s", trimmedBody)
-		return "", fmt.Errorf("API returned error: %s", trimmedBody)
-	}
-
-	// Parse the response
-	var completionResp ChatCompletionResponse
-	if err := json.Unmarshal(trimmedBody, &completionResp); err != nil {
-		logger.Error("Failed to unmarshal response: %v, body: %s", err, trimmedBody)
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	// Return the response content
-	if len(completionResp.Choices) > 0 {
-		responseContent := completionResp.Choices[0].Message.Content
-		logger.Debug("Received AI response (%d characters): %s", len(responseContent), responseContent)
-		return responseContent, nil
-	}
-
-	// Enhanced error for no completion choices
-	logger.Error("No completion choices returned. Raw response: %s", string(trimmedBody))
-	return "", fmt.Errorf("no completion choices returned (model: %s, status: %d)", model, resp.StatusCode)
+	content := resp.Choices[0].Message.Content
+	logger.Debug("Received OpenAI response (%d characters)", len(content))
+	return content, nil
 }
 
 // Response sends a request to the OpenAI Responses API
@@ -483,22 +329,21 @@ func (c *AiClient) Response(ctx context.Context, messages []Message, model strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read the response
-	body, err := io.ReadAll(resp.Body)
+	// Read and clean the response (handle plain JSON or SSE streams)
+	cleanBody, err := c.readResponseBody(resp)
 	if err != nil {
 		logger.Error("Failed to read Responses API response: %v", err)
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Log the raw response for debugging
-	logger.Debug("Responses API response status: %d, response size: %d bytes", resp.StatusCode, len(body))
+	// Log the cleaned response for debugging
+	logger.Debug("Responses API response status: %d, cleaned response size: %d bytes", resp.StatusCode, len(cleanBody))
 
-	// Some providers (e.g., OpenRouter) may stream additional SSE-like lines after JSON.
-	// Trim any trailing data after the final JSON object.
-	trimmedBody := body
-	if i := bytes.LastIndexByte(body, '}'); i != -1 && i+1 < len(body) {
-		if suffix := bytes.TrimSpace(body[i+1:]); len(suffix) > 0 {
-			trimmedBody = body[:i+1]
+	// Trim any trailing data after the final JSON object (if needed).
+	trimmedBody := cleanBody
+	if i := bytes.LastIndexByte(cleanBody, '}'); i != -1 && i+1 < len(cleanBody) {
+		if suffix := bytes.TrimSpace(cleanBody[i+1:]); len(suffix) > 0 {
+			trimmedBody = cleanBody[:i+1]
 		}
 	}
 
@@ -540,7 +385,7 @@ func (c *AiClient) Response(ctx context.Context, messages []Message, model strin
 	}
 
 	// Enhanced error for no response content
-	logger.Error("No response content returned. Raw response: %s", string(body))
+	logger.Error("No response content returned. Raw response: %s", string(trimmedBody))
 	return "", fmt.Errorf("no response content returned (model: %s, status: %d)", model, resp.StatusCode)
 }
 
