@@ -173,11 +173,7 @@ func (c *AiClient) GetResponseFromChatMessages(ctx context.Context, chatMessages
 	var err error
 
 	switch apiType {
-	case "responses":
-		response, err = c.OpenAIChat(ctx, aiMessages, model)
-	case "azure":
-		response, err = c.OpenAIChat(ctx, aiMessages, model)
-	case "openrouter":
+	case "openai":
 		response, err = c.OpenAIChat(ctx, aiMessages, model)
 	case "gemini":
 		response, err = c.GeminiGenerateContent(ctx, aiMessages, model)
